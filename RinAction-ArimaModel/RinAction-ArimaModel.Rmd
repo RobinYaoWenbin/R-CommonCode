@@ -1,0 +1,59 @@
+---
+title: "RinAction-ArimaModel"
+author: "RobinYao"
+date: "2019.11.8"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# 序列的变换以及稳定性评估
+first we see the time series data, and find it has trend, so We do a first-order difference, then through the adf test, we find the time series to be the stable.
+```{r}
+library(forecast)
+library(tseries)
+plot(Nile)
+ndiffs(Nile)
+dNile <- diff(Nile)
+plot(dNile)
+adf.test(dNile)
+```
+# Model Selection
+show the acf and pacf of time series, to do the model selection
+```{r}
+Acf(dNile)
+Pacf(dNile)
+```
+# Fit the Model
+we choose the amima(0 , 1 , 1), then use the data to fit the model
+```{r}
+library(forecast)
+fit <- arima(Nile , order = c(0 , 1 , 1))
+fit
+accuracy(fit)
+```
+# 模型评价
+```{r}
+qqnorm(fit$residuals)
+qqline(fit$residuals)
+Box.test(fit$residuals , type = "Ljung-Box")
+```
+# 预测
+我们用前面得到的模型做预测，深灰色的是95%置信区间,浅灰色的是80%置信区间
+```{r}
+result <- forecast(fit , 3)
+plot(result , xlab = "Year" , ylab = "Annual Flow")
+```
+# 自动识别Arima Model
+除了上述那种人工的方法,还可以用程序来自动识别Arima模型,代码如下所示：
+```{r}
+library(forecast)
+fit <- auto.arima(sunspots)
+fit
+forecast(fit , 3)
+accuracy(fit)
+```
+
