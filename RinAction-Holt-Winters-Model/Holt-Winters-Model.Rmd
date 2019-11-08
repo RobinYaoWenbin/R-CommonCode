@@ -1,0 +1,164 @@
+---
+title: "RinAction-Time series model, Holt-Winters model"
+author: "RobinYao"
+date: "2019.11.7"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 了解时间序列
+了解一下R里面常用的时间序列数据结构:ts().
+
+```{r}
+# create a time series
+sales <- c(18 , 33 , 41 , 7 , 34 , 35 , 24 , 25 , 24 , 25 , 24 , 21 ,
+           22 , 31 , 40 , 29 , 25 , 21 , 22 , 54 , 31 , 25, 26 , 35)
+tsales <- ts(sales , start = c(2003 , 1) , frequency = 12)
+tsales
+plot(tsales)
+start(tsales)
+end(tsales)
+frequency(tsales)
+tsales.subset <- window(tsales , start = c(2003 , 5) , end = c(2004 , 6))
+tsales.subset
+```
+
+# Moving Average
+使用移动平均方法来对时间序列数据做平滑，平滑时选取的时间窗越长，数据就会越平滑。
+```{r}
+# Moving average
+library(forecast)
+opar <- par(no.readonly = TRUE)  #then you can change the parametor of the par()
+par(mfrow = c(2 , 2))
+ylim <- c(min(Nile) , max(Nile))
+plot(Nile , main = "Raw time series")
+plot(ma(Nile , 3) , main = "Simple Moving Average (k = 3)" , ylim=ylim)
+plot(ma(Nile , 7) , main = "Simple Moving Average (k = 3)" , ylim=ylim)
+plot(ma(Nile , 15) , main = "Simple Moving Average (k = 3)" , ylim=ylim)
+par(opar)
+```
+# 时间序列的分解
+对时间序列数据进行分解，分解为：1.趋势(Trend),2.季节性(seanon),3.随机性(irregular component).分解通常可以分为相加模型和相乘模型。相加模型就是说简单的将Trend+season+error，相乘模型就是说Trend * season * irregular，相比较而言，一般认为相乘模型更符合实际情况。R in action中给了一个直观的解释，举个例子：相加模型就是说每到春季就加上100，夏季加上200，秋季加100，冬季加0，而不管这个序列的去掉season后的值怎么样，而对于相乘模型的话，在不同季节相加的时候，还会考虑序列中去掉season component后的值的大小的影响。R中的stl()分解方法只能分解为相加模型,对于相乘模型的分解可以通过对原数据取对数得到。
+
+```{r}
+# decompose the time series to trend, seasonal, error component.
+opar <- par(no.readonly = TRUE)  #then you can change the parametor of the par()
+par(mfrow = c(1 , 2))
+plot(AirPassengers) # show the data of airpassengers
+AirPassengers.log <- log(AirPassengers)
+plot(AirPassengers.log , ylab = "log(AirPassengers)")
+par(opar)
+fit <- stl(AirPassengers.log , s.window = "periodic")
+plot(fit)
+fit$time.series
+exp(fit$time.series)  #change back to the origin number
+```
+```{r}
+# visulize the decomposing result
+par(mfrow = c(2 , 1))
+library(forecast)
+monthplot(AirPassengers , xlab = "" , ylab = "")
+seasonplot(AirPassengers , year.labels = "TRUE" , main = "")
+```
+
+# 指数模型
+指数模型是时间序列中进行预测的最常见的模型之一，包括单指数模型,双指数模型,三指数模型等。
+## 单指数模型
+单指数模型只包括level项和error项
+Y~t~ = level + irregular
+一步前向预测可以写作：
+Y~t+1~ = c~0~Y~t~ + c~1~Y~t-1~ + c~2~Y~t-2~ + ...
+where c~i~ = \alpha * (1-\alpha)^i^
+其中，单指数具有一个参数，适合于具有平稳性特征时间序列的预测，也称为平稳性预测。
+也可以这样来写公式，实际上与上面的是等效的。
+S~t~ = ay~t-1~+(1-a)S~t-1~
+做前向i预测，并将S~t~不断向前递推，便可以得到下式
+$S~t = a\sum_1^{t-2}(1-a)^{i-1}y_{t-i} + (1-a)^{t-2}S_2 , (t>=2)$
+**做预测**
+$x_{i+h} = s_i$
+```{r}
+# simple/single exponential model
+library(forecast)
+fit <- ets(nhtemp , model = "ANN")
+fit
+forecast(fit , 1)
+plot(forecast(fit , 1) , xlab = "Year")
+accuracy(fit)
+```
+## 双指数模型 & 三指数模型 
+一次模型的局限性较大，仅仅在平稳序列中是可行的，在有趋势项或是季节项的时候就不再可行了。
+Holt指数平滑可以对有水平项和趋势项的时序进行拟合
+Y~t~ = level + slope * t + irregular
+平滑参数alpha控制水平项的指数下降，同单指数所述;
+beta控制斜率的指数型下降；
+双指数预测具有两个参数，适合于具有趋势性特征时间序列的预测，也称为趋势性预测。三指数预测具有三个参数，适合于具有趋势和季节性或周期性特征时间序列的预测，也称为季节性或周期性预测。
+**二次指数平滑法(加法模型的公式)**
+$S_i = \alpha x_i + (1-\alpha)(S_{i-1} + t_{i-1})$
+$t_i = \beta (s_i-s_{i-1}) + (1-\beta)t_{i-1}$
+所以我们知道\beta是越接近1，意味着近期的趋势有更大的权重
+**做预测的公式**
+取最后平滑值，每增加一个时间步长就在该平滑值上增加一次平滑趋势：
+$x_{i+h} = s_i + ht_i$
+
+## 三次指数平滑法(Holt-Winters)
+当一个序列在每个固定的时间间隔中都出现某种重复的模式，就称之具有季节性特征，而这样的一个时间间隔称为一个季节(理解：比如说在一周内，销量呈现出重复的模式)。一个季节的长度k为它所包含的序列点个数。
+可以想到，对季节分量也要做指数平滑。
+$s_i = \alpha(x_i-p_{i-k})+(1-\alpha)(s_{i-1}+t_{i-1})$
+$t_i=\beta(s_i-s_{i-1})+(1-\beta)t_{i-1}$
+$p_i = \gamma(x_i-s_i)+(1-\gamma)p_{i-k}$
+$p_i$ is the "periodic" part
+**前向预测公式**
+$x_{i+h} = s_i+ht_i+p_{i-k+h}$
+where k is the length of the period
+从公式中我们可以容易知道\gamma越接近1，说明近期的周期项的权重越高.
+
+```{r}
+# triple exponential model
+library(forecast)
+library(ggplot2)
+par(mfrow = c(2 , 2))
+# plot(AirPassengers)
+AirPassengers.log = log(AirPassengers)
+plot(AirPassengers.log)
+fit <- ets(log(AirPassengers) , model = "AAA") #fit the triple exponential model
+fit
+accuracy(fit)
+pred <- forecast(fit , 5)
+plot(pred, main = "forecast for air travel" , ylab = "Log(AirPassengers)" , xlab = "Time" , xlim = c(1949, 1961)) 
+par(new = TRUE)
+plot(pred$fitted, xlim = c(1949, 1961), ylab = "Log(AirPassengers)")
+
+pred$mean <- exp(pred$mean)
+pred$lower <- exp(pred$lower)
+pred$upper <- exp(pred$upper)
+p <- cbind(pred$mean , pred$lower , pred$upper)
+dimnames(p)[[2]] <- c("mean" , "Lo 80" , "Lo 95" , "Hi 80" , "Hi 95")
+p
+
+# try to train model without transfer data to log
+# str(pred)
+```
+
+
+# 自动选择模型,并训练模型来进行预测
+```{r}
+# auto select the best model based on the function ets()
+library(forecast)
+plot(JohnsonJohnson)
+par(mfrow = c(1 , 2))
+fit <- ets(JohnsonJohnson)  #auto get the model based on the func ets()
+fit
+plot(forecast(fit) , main = "Johnson & Johnson Forecasts" , ylab = "Quarterly Earning (Dollars)" , xlab = "Time" , 
+     flty = 2)
+
+# mannually set model, and compare it with the automatic setting
+fit.manual <- ets(JohnsonJohnson , model = "MMM")  #auto get the model based on the func ets()
+fit.manual
+plot(forecast(fit.manual) , main = "Johnson & Johnson Forecasts" , ylab = "Quarterly Earning (Dollars)" , xlab = "Time" ,
+     flty = 2)
+```
+ 
+note:以上的公式都是加法模型的，但是R的代码是乘法模型的。乘法模型的推导复杂，但是思想还是类似的。
