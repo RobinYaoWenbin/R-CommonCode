@@ -1,0 +1,670 @@
+---
+title: "Using R for Econometrics and Statistics"
+author: "Robin_Yao_Wenbin(StudentID:21912086)"
+date: "2019.11.9"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+The function defined by myself that this document needs.
+
+```{r}
+ConcatDate <- function(Year , Month){
+  ## transfer the year of int and month of int to character year+month
+  if (Month < 10){
+    paste(as.character(Year) , "-"  , "0" , as.character(Month) , sep = "")
+  }
+  else{
+    paste(as.character(Year) , "-"  , as.character(Month) , sep = "")
+  }
+}
+
+ConcatDate2 <- function(YearVec , MonthVec){
+  DateVec<-vector(mode = "character",length=0)
+  for (ind in 1:length(YearVec)){
+    DateVec[ind] <- ConcatDate(YearVec[ind] , MonthVec[ind]) 
+  }
+  DateVec
+}
+
+L2Norm <- function(x){
+  result <- sqrt(sum(x ^ 2 , na.rm = TRUE))
+  result
+}
+
+L1Norm <- function(x){
+  result <- sum(abs(x) , na.rm = TRUE)
+  result
+}
+
+```
+
+# First Task
+
+## 1.a
+
+**Question**
+
+Start by plotting the unemployment rate against time. Is the series
+trending? Cyclical?
+
+**Answer**
+
+From the figure, we can know that this time series is periodic, trending is not pretty evident.
+```{r}
+library(xts)
+library(sqldf)
+FileRoute = "F:\\study1\\研一\\R语言应用\\大作业\\"
+data <- read.csv(paste(FileRoute , 'rates.txt' , sep = ""),sep='\t',header=FALSE , fileEncoding='gbk' , col.names = c("Year","Month","UnemplRate","TenYearTreaRate","ThrMonTreaRate","AAArate","BAArate","Housestarts","BuildingPermits","IndusprodInd","CPI"))
+#transfer the data.frame to xts
+data$Date <- ConcatDate2(data$Year , data$Month)
+data <- sqldf("select * from data where Date >= '1962-01' ")
+data$Date <- as.yearmon(data$Date, "%Y-%m")
+head(data)
+# plot 
+UnempRate <- xts(x = data$UnemplRate , order.by = data$Date)
+plot(UnempRate , xlab =  "Time" , ylab = "Unemployment Rate" , main="Unemployment Rate")
+```
+
+## 1.b
+
+**Question**
+
+Estimate an AR(4) model (always include an intercept!) by leastsquares. Report coefficient estimates, robust standard errors, and a one-step point forecast for July 2012.
+
+**Answer**
+
+we find that time series is almost steady after 1st order difference. Through the adf test, we confirm the hypothesis that the time series after differencing is stationary. Then i fit the ARIMA(4 , 1 , 0) (Also the AR(4) after 1st differencing), and give the accurancy, 1 step foward forecasting.
+```{r}
+# Get the order of time series
+library(forecast)
+library(tseries)
+ndiffs(UnempRate)  #get the best order of time series, result is 1
+dUnempRate <- diff(UnempRate)
+dUnempRate <-dUnempRate[!is.na(dUnempRate)] 
+plot(dUnempRate , xlab =  "Time" , ylab = "First order difference of Unemployment Rate" , main="First order difference of Unemployment Rate")
+adf.test(dUnempRate)
+fit <- Arima(UnempRate , order = c(4 , 1 , 0))
+fit
+accuracy(fit)
+onestepfore <- forecast(fit , 1)
+onestepfore
+plot(onestepfore)
+```
+
+## 1.c
+
+**Question**
+
+Estimate a set of autoregressions (always include an intercept!) by least-squares, AR (1) through AR (24). For each, calculate the Cross Validation information criterion. Also calculate the BIC, AIC, AICc, Mallows, Robust Mallows information criteria. Create a table for your results.
+
+**Answer**
+
+I choose mean MAE as the evaluation index of cross validation, and i get CV.MAE , BIC , AIC , AICC, The mallows , Robust Mallows information criteria are temporarily difficult to get, i will consider them later.
+Besides, I do not know why the "warnings" occurs in the cross validation, but it doesn't influence the result, so please ignore the red warnings though it is ugly, and see the result of dataframe directly.
+```{r}
+ARModelInfo <- data.frame(CV.MAE = 0  , BIC = 0 , AIC = 0 , AICc = 0 )
+# ARModelInfo <- ARModelInfo[ , ]
+for (i in 1:24){
+  fit <- Arima(UnempRate , order = c(i , 1 , 0))
+  # get aicc and bic
+  npar <- length(fit$coef) + 1
+  nstar <- length(fit$residuals) - fit$arma[6] - fit$arma[7] * fit$arma[5]
+  bic <- fit$aic + npar * (log(nstar) - 2)
+  aicc <- fit$aic + 2 * npar * (nstar/(nstar - npar - 1) - 1)
+  aic <- fit$aic
+  accuracy(fit)
+  RMSE <- accuracy(fit)[2]  #RMSE
+  
+  # calculate the cross validation of ARIMA Model, and here the evaluation choose the MAE
+  k <- 60 # minimum data length for fitting a model
+  n <- length(UnempRate)
+  mae <- matrix(NA , 44 , 12)
+  print(i)
+  st <- 1962 + k / 12  # (k - 1) / 12 convert month to year, then get the time horizon of train set
+  for(j in 1:44)
+  {
+    xshort <- UnempRate[paste("/" , as.character(st + j - 1) , sep = "")]  #in 1 year once 
+    xnext <- UnempRate[as.character(as.character(st + j))]  # get 1 year after train set. 
+    if (i == 9){
+      fit <- Arima(xshort, order=c(i , 1 , 0) , method = "ML")
+    }
+    else{
+      fit <- Arima(xshort, order=c(i , 1 , 0) , method = "CSS")
+    }
+    fcast <- forecast(fit, h=12)
+    mae[j,] <- abs(fcast[['mean']]-xnext)
+  }
+  # plot(1:12, colMeans(mae1), type="l", col=2, xlab="horizon", ylab="MAE")
+  # legend("topleft",legend=c("ARIMA"))
+  CV.MAE <- mean(mae)
+  
+  temp <- c(CV.MAE , bic , aic , aicc)
+  ARModelInfo[i , ] <- temp
+}
+ARModelInfo
+```
+
+
+## 1.d
+
+**Question**
+
+Based on the CV criteria, select an AR model
+
+**Answer**
+
+we can know that ARIMA(3 , 1 , 0) is the best model based on CV.MAE, whose CV.MAE is almost the same as AR(4 , 1 , 0).While the best model is ARIMA(4 , 1 , 0) based on the BIC, AIC, AICc.
+
+## 1.e & f
+
+**Question**
+
+Use this model to make a one-step point forecast for July 2012.
+Report coefficient estimates and robust standard errors.
+
+**Answer**
+
+see belows.
+```{r}
+fit <- Arima(UnempRate , order = c(3 , 1 , 0))
+fit
+accuracy(fit)
+onestepfore <- forecast(fit , 1)
+onestepfore
+plot(onestepfore)
+```
+
+## 1.g & h
+
+**Question**
+
+Now consider the other variables in the data set. After making suitable transformations, include these variables in your model. Using the information criteria, select a forecasting model.
+Use this forecasting model to make a one-step point forecast for July 2012.
+
+**Answer**
+
+Firstly, I pre whitened the unemployment rate variable with other variables, then i find that the unemployment rate variable is correlated with any other variable. So i do pca first, and get 3 principal components. Then through ccf figure, i find the correlation between unemployment and other variables. Then the arima model with other regressor variables has been fitted. After that, i find the component2 and component3 are not significant, so i set them to be 0. Finally, forecasting has been done based on the model and the model is better than arima(4 , 1 , 0) based on AIC.
+
+```{r}
+# plot every variable's trend to have a rough understanding of them.
+head(data)
+
+plot(UnempRate , main="UnemployRate")
+
+par(mfrow = c(4 , 2))
+
+TenYearTreaRate <- xts(x = data$TenYearTreaRate , order.by = data$Date)
+plot(TenYearTreaRate , xlab =  "Time" , ylab = "TenYearTreaRate" , main="TenYearTreaRate")
+
+ThrMonTreaRate <- xts(x = data$ThrMonTreaRate , order.by = data$Date)
+plot(ThrMonTreaRate , xlab =  "Time" , ylab = "ThrMonTreaRate" , main="ThrMonTreaRate")
+
+AAArate <- xts(x = data$AAArate , order.by = data$Date)
+plot(AAArate , xlab =  "sTime" , ylab = "AAArate" , main="AAArate")
+
+BAArate <- xts(x = data$AAArate , order.by = data$Date)
+plot(BAArate , xlab =  "Time" , ylab = "BAArate" , main="BAArate")
+
+Housestarts <- xts(x = data$Housestarts , order.by = data$Date)
+plot(Housestarts , xlab =  "Time" , ylab = "Housestarts" , main="Housestarts")
+
+BuildingPermits <- xts(x = data$BuildingPermits , order.by = data$Date)
+plot(BuildingPermits , xlab =  "Time" , ylab = "BuildingPermits" , main="BuildingPermits")
+
+IndusprodInd <- xts(x = data$IndusprodInd , order.by = data$Date)
+plot(IndusprodInd , xlab =  "Time" , ylab = "IndusprodInd" , main="IndusprodInd")
+
+CPI <- xts(x = data$CPI , order.by = data$Date)
+plot(CPI , xlab =  "Time" , ylab = "CPI" , main="CPI")
+
+# Pre whitening to see the correlated varialbles
+library(TSA)
+par(mfrow = c(1 , 1))
+
+# par(mfrow = c(4 , 1))
+FiltModel <- arima(UnempRate , order = c(4 , 1 , 0))
+CCF1 <- prewhiten(UnempRate , TenYearTreaRate , x.model = FiltModel , ylab="CCF")
+CCF2 <- prewhiten(UnempRate , ThrMonTreaRate , x.model = FiltModel , ylab="CCF")
+CCF3 <- prewhiten(UnempRate , AAArate , x.model = FiltModel , ylab="CCF")
+CCF4 <- prewhiten(UnempRate , BAArate , x.model = FiltModel , ylab="CCF")
+# par(mfrow = c(4 , 1))
+CCF5 <- prewhiten(UnempRate , Housestarts , x.model = FiltModel , ylab="CCF")
+CCF6 <- prewhiten(UnempRate , BuildingPermits , x.model = FiltModel , ylab="CCF")
+CCF7 <- prewhiten(UnempRate , IndusprodInd , x.model = FiltModel , ylab="CCF")
+CCF8 <- prewhiten(UnempRate , CPI , x.model = FiltModel , ylab="CCF")
+```
+
+We can find that a lot of variables are correlated to the UnemployRate, but they have high correlation, so i would like to do pca first. Then analyse the ccf between Unemployment and other variables.
+
+Through the ccf figure, i find that component1 in the past 2 month, component2 in the past 1 month and component3 in the past 1 month can contribute to the arima with regressors model.
+```{r}
+library(pls)
+#pca.cov = princomp(rtn)
+pca = prcomp(data[c("TenYearTreaRate","ThrMonTreaRate","AAArate","BAArate","Housestarts","BuildingPermits","IndusprodInd","CPI")] , center = TRUE, scale. = TRUE)
+names(pca)
+summary(pca)
+plot(pca$sdev^2/sum(pca$sdev^2), xlim = c(0, 15), type = "b", pch = 16, xlab = "principal components",ylab = "variance explained")
+
+PCAComp <- as.data.frame(pca$x)
+PCAComp <- PCAComp[c("PC1" , "PC2" , "PC3")]
+Com1 <- xts(x = PCAComp[1] , order.by = data$Date)
+Com2 <- xts(x = PCAComp[2] , order.by = data$Date)
+Com3 <- xts(x = PCAComp[3] , order.by = data$Date)
+xregressor =  cbind(as.numeric(Com1[606]) , as.numeric(Com2[606]) , as.numeric(Com3[604])) 
+
+CCF1 <- prewhiten(UnempRate , Com1 , x.model = FiltModel , ylab="CCF")
+CCF2 <- prewhiten(UnempRate , Com2 , x.model = FiltModel , ylab="CCF")
+CCF3 <- prewhiten(UnempRate , Com3 , x.model = FiltModel , ylab="CCF")
+
+Com1 <- lag(Com1 , k = 1)
+Com2 <- lag(Com2 , k = 1)
+Com3 <- lag(Com3 , k = 3)
+# Com2 <- Com2[-1]
+# Com1 <- Com1[-1]
+# Com3 <- Com3[-1]
+# UnempRate2 <- UnempRate[-1]
+Xvari <- cbind(Com1, Com2, Com3)
+head(Xvari)
+
+# fit the Multivariate time series model
+MulArimaMod <- Arima(UnempRate , order = c(4 , 1 , 0) ,
+                     xreg = Xvari )
+MulArimaMod
+accuracy(MulArimaMod)
+
+# Set component2 and component3's coefficients to be 0, then fit the model again.
+MulArimaMod <- Arima(UnempRate , order = c(4 , 1 , 0) ,
+                     xreg = Xvari  , fixed = c(NA , NA , NA , NA , NA , 0 , 0))
+MulArimaMod
+accuracy(MulArimaMod)
+
+onestepfore2 <- forecast(MulArimaMod , xreg = xregressor , h = 1)
+onestepfore2
+plot(onestepfore2)
+```
+
+# Second Task
+
+## 2.a
+
+**Question**
+
+The 'glmnet' function, by default, internally scales the predictor variables so that they will have standard deviation 1, before solving the ridge regression or lasso problems. This is a result of its default setting 'tandardize=TRUE'. Explain why such scaling is appropriate in our particular application. 
+
+**Answer**
+
+Because ridge regression and lasso are based on the least square plus a penalty term, Penalty term is added to limit the size of the parameter. Therefore, the dimension of parameters will affect the size of penalty terms, so it needs to be standardized. So that every parameter can contribute to the penalty term.
+Besides, sometimes we will meet the problem that one variable is pretty big comparing to other variables, then it might cause numerical calculation problems
+
+## 2.b
+
+**Question**
+
+Run the following command 
+    rid.mod = glmnet(x ,y , lambda=grid , alpha=0) 
+    las.mod = glmnet(x ,y , lambda=grid , alpha=1)
+This fits ridge regression and lasso estimates, over the whole sequence of $\lambda$ values specified by grid. The flag "\alpha=0" notifies g1mnet to perform ridge regression, and "\alpha=1" notifies it to perform lasso regression. Verify that, for each model, as 浣? decreases, the value of the penalty term only increases. That is, for the ridge regression model, the squared l2 norm of the coeffcients only gets bigger as $\lambda$ decreases. And for the lasso model, the l1 norm of the coeffients only gets bigger as $\lambda$ decreases. You should do this by producing a plot of $\lambda$ (on the x-axis) versus) versus the penalty (on the y-axis) for each method. The plot should be on a log-log scale. 
+
+**Answer**
+
+see belows.
+*note:the code in this chunk need the function that i defined.*
+```{r}
+library(glmnet)
+library(ISLR)
+grid <- 10^seq(10 , -2 , length = 100) 
+df.Hitters = sqldf("select * from Hitters where Salary > 0")
+rid.mod = glmnet(as.matrix(df.Hitters[c("AtBat" , "Hits" , "HmRun" , "Runs" , "RBI" , "Walks" , "Years" , "CAtBat" , "CHits" , "CHmRun" , "CRuns" , "CRBI" , "CWalks" , "PutOuts" , "Assists" , "Errors")]) , df.Hitters$Salary , lambda=grid , alpha=0)
+las.mod = glmnet(as.matrix(df.Hitters[c("AtBat" , "Hits" , "HmRun" , "Runs" , "RBI" , "Walks" , "Years" , "CAtBat" , "CHits" , "CHmRun" , "CRuns" , "CRBI" , "CWalks" , "PutOuts" , "Assists" , "Errors")]) , df.Hitters$Salary , lambda=grid , alpha=1)
+par(mfrow = c(2 , 1))
+plot(rid.mod , xvar = "lambda"  , main = "Ridge regression")
+plot(las.mod , xvar = "lambda" , main = "Lasso")
+
+par(mfrow = c(2 , 2))
+Coefficients <- rid.mod$beta
+CoefficientsL2Norm <- apply(Coefficients , 2 , L2Norm)
+L2Penalty <- CoefficientsL2Norm * rid.mod$lambda
+plot(log(rid.mod$lambda) , log(L2Penalty) , main = "Ridge Regression")
+plot(log(rid.mod$lambda) , log(CoefficientsL2Norm) , main = "Ridge Regression")
+
+Coefficients <- las.mod$beta
+CoefficientsL1Norm <- apply(Coefficients , 2 , L1Norm)
+L1Penalty <- CoefficientsL1Norm * las.mod$lambda
+plot(log(las.mod$lambda) , log(L1Penalty) , main = "Lasso Regression")
+plot(log(las.mod$lambda) , log(CoefficientsL1Norm) , main = "Lasso Regression")
+```
+
+## 2.c
+
+**Question**
+
+Verify that, for a very small value of ??; both the ridge regression and lasso estimates are very close to the least squares estimate. Also verify that, for a very large value of ??; both the ridge regression and lasso estimates approach 0 in all components (except the intercept, which is not penalized by default).
+
+**Answer**
+
+I print 3 models' coefficients, we can find they are almost the same. And we can find from the figure below, the coefficients become 0 when lambda get pretty bigger.
+```{r}
+par(mfrow = c(2 , 1))
+ols.mod <- lm(Salary~AtBat + Hits + HmRun + Runs + RBI + Walks + Years + CAtBat + CHits + CHmRun + CRuns + CRBI + CWalks + PutOuts + Assists + Errors , data = df.Hitters)
+print("ols's coefficients")
+ols.mod$coefficients
+print("")
+print("ridge regression's coefficients where lambda is 0.01")
+rid.mod$beta[,100]
+print("")
+print("Lasso's coefficients where lambda is 0.01")
+las.mod$beta[,100]
+plot(rid.mod , xvar = "lambda"  , main = "Ridge regression")
+plot(las.mod , xvar = "lambda" , main = "Lasso")
+```
+
+## 2.d
+
+**Question**
+
+For each of the ridge regression and lasso models, perform 5 -fold cross-validation to determine the best value of $\lambda$. Report the results from both the usual rule, and the one standard error rule for choosing $\lambda$: You can either perform this cross-validation procedure manually, or use the "cv.glmnet" function. Either way, produce a plot of the cross-validation error curve as a function of ??; for both the ridge and lasso models.
+
+**Answer**
+
+see belows
+```{r}
+# 10-fold Cross validation for each alpha = 0, 0.1, ... , 0.9, 1.0
+fit.lasso.cv <- cv.glmnet(as.matrix(df.Hitters[c("AtBat" , "Hits" , "HmRun" , "Runs" , "RBI" , "Walks" , "Years" , "CAtBat" , "CHits" , "CHmRun" , "CRuns" , "CRBI" , "CWalks" , "PutOuts" , "Assists" , "Errors")]) , df.Hitters$Salary , lambda = grid , alpha = 1 , family = "gaussian" ,  nfolds = 5)
+
+fit.rid.cv <- cv.glmnet(as.matrix(df.Hitters[c("AtBat" , "Hits" , "HmRun" , "Runs" , "RBI" , "Walks" , "Years" , "CAtBat" , "CHits" , "CHmRun" , "CRuns" , "CRBI" , "CWalks" , "PutOuts" , "Assists" , "Errors")]) , df.Hitters$Salary , lambda = grid , alpha = 0 , family = "gaussian" ,  nfolds = 5)
+# Plot solution paths:
+par(mfrow=c(2,2))
+# For plotting options, type '?plot.glmnet' in R console
+plot(las.mod, xvar="lambda")
+plot(fit.lasso.cv, main="LASSO")
+
+plot(rid.mod, xvar="lambda")
+plot(fit.rid.cv, main="ridge regression")
+
+print("lasso's lambda of min cv error and lambda based on the one standard error rule")
+fit.lasso.cv$lambda.min
+fit.lasso.cv$lambda.1se
+
+print("ridge regression's lambda of min cv error and lambda based on the one standard error rule")
+fit.rid.cv$lambda.min
+fit.rid.cv$lambda.1se
+```
+
+## 2.e
+
+**Question**
+
+From the last part, you should have computed 4 values of the tuning parameter:
+$$
+\lambda_{min}^{ridge},\lambda_{lse}^{ridge},\lambda_{min}^{lasso},\lambda_{lse}^{lasso}
+$$
+These are the results of running 5-fold cross-validation on each of the ridge and lasso models, and using the usual rule (min) or the one standard error rule (1se) to select $\lambda$. Now, using the predict function, with type: "coef", and the ridge and lasso models fit in part (b), report the coefficient estimates at the appropriate values
+of $\lambda$. That is, you will report two coefficient vectors coming from ridge regression with $\lambda = \lambda_{min}^{ridge} and \lambda = \lambda_{1se}^{ridge}$, and likewise for the lasso. How do the coefficient estimates from the usual rule compare to those from the one standard error rule? How do the ridge estimates compare to those from the lasso?
+
+**Answer**
+
+see belows.
+lambda_min is value of lambda that gives minimum cvm where cvm is the mean cross-validated error. So the best model chosen by the lambda_min is the model that has the minimum generalization error.
+lambda_1se is the largest value of lambda such that error is within 1 standard error of the minimum. So the best model chosen by the lambda_1se is the model that has a good performance but not the best in the test set, in the meanwhile, the model is as much simple as possible.
+Ridge regression coefficents estimates compare to those from the lasso are much more complex, wuich means lasso model has less parameters that not euqal to 0. 
+```{r}
+print("ridge regression's 1se lambda:")
+fit.rid.cv$lambda.1se
+print("ridge regression's min cv_erroe lambda:")
+fit.rid.cv$lambda.min
+
+print("Lasso's 1se lambda:")
+fit.lasso.cv$lambda.1se
+print("Lasso's min cv_erroe lambda:")
+fit.lasso.cv$lambda.min
+
+print("ridge regression's coefficients of 1se lambda:")
+rid.mod$beta[ , rid.mod$lambda == fit.rid.cv$lambda.1se]
+print("ridge regression's coefficients of min cv error lambda:")
+rid.mod$beta[ , rid.mod$lambda == fit.rid.cv$lambda.min]
+print("Lasso's coefficients of 1se lambda:")
+las.mod$beta[ , las.mod$lambda == fit.lasso.cv$lambda.1se]
+print("Lasso's coefficients of min cv error lambda:")
+las.mod$beta[ , las.mod$lambda == fit.lasso.cv$lambda.min]
+```
+
+## 2.f
+
+**Question**
+
+Suppose that you were coaching a young baseball player who wanted to strike it rich in the major leagues. What handful of attributes would you tell this player to focus on? (That is, how to measure variable importance?)
+
+**Answer**
+
+We can find that the variables of Hits, Walks, CRuns, CRBI not equal to 0 significantly. And these coefficients are all positive, So we suggest that the player focus on the aspects of Hits, Walks, CRuns, CRBI.
+
+# Third Task
+
+## 3.a
+
+**Question**
+
+For the "sp500price" data set we have used in class, you need to specify an appropriate form of GARCH model for the return of 'sp500' with information criterion method and rolling estimation method. For rolling method, the window size is 2500 and the estimation is implemented every 100 observations (To save the computation cost, moving window method is recommended.) 
+
+**Answer**
+
+We can get the conclusion that Model5 is the best model among the 6 models, while Model1 is also good.
+
+Firstly , have a rough understanding of the sp500ret data, then I find arima(1 , 0 , 4) would be a good choice to fit the data.
+```{r}
+library(PerformanceAnalytics)
+par(mfrow = c(3 , 1))
+load(paste(FileRoute , "sp500prices.Rdata" , sep = ""))
+str(sp500prices)
+# Plot daily S&P 500 prices
+plot(sp500prices)
+# Compute daily returns
+sp500ret <- CalculateReturns(sp500prices)
+# Plot daily returns
+plot(sp500ret)
+plot(abs(sp500ret))
+# Compute the daily standard deviation for the complete sample
+sd(na.omit(sp500ret))
+sp500ret = sp500ret[-1]
+sd(sp500ret[-1])
+# Compute the annualized volatility for the complete sample
+sqrt(252) * sd(sp500ret)
+# Compute the annualized deviation for the year 2009
+sqrt(252) * sd(sp500ret["2009"])
+# Compute the annualized standard deviation for the year 2017 
+sqrt(252) * sd(sp500ret["2017"])
+
+adf.test(sp500ret)
+Box.test(sp500ret , lag = 6  , type = "Ljung-Box")
+Acf(sp500ret)
+Pacf(sp500ret)
+fit <- arima(sp500ret , order = c(1 , 0 , 4))
+qqnorm(fit$residuals)
+qqline(fit$residuals)
+Acf(fit$residuals)
+Pacf(fit$residuals)
+Box.test(fit$residuals , lag = 6  , type = "Ljung-Box")
+```
+
+Secondly, find the best model.
+```{r}
+# Showing two plots on the same figure
+par(mfrow=c(2,1)) 
+
+# Compute the rolling 1 month estimate of annualized volatility
+chart.RollingPerformance(R = sp500ret["2000::2017"], width = 22,
+     FUN = "sd.annualized", scale = 252, main = "One month rolling volatility")
+
+# Compute the rolling 3 months estimate of annualized volatility
+chart.RollingPerformance(R = sp500ret["2000::2017"], width = 66,
+     FUN = "sd.annualized", scale = 252, main = "Three months rolling volatility")
+
+# Model selection
+#First Model
+library(rugarch)
+# Specify a standard GARCH model with constant mean
+tgarchspec0 <- ugarchspec(mean.model = list(armaOrder = c(0,0)),
+                 variance.model = list(model ="sGARCH",garchOrder = c(1, 1)), 
+                 distribution.model = "norm")
+
+garchroll0 <- ugarchroll(tgarchspec0, data = sp500ret, n.start = 2500,
+refit.window = "moving", refit.every = 100)
+preds0 <- as.data.frame(garchroll0)
+e0 <- preds0$Realized - preds0$Mu
+d0 <- e0^2 - preds0$Sigma^2
+predaccu0 <- mean(d0^2)
+
+# second model
+tgarchspec1 <- ugarchspec(mean.model = list(armaOrder = c(1,0)),
+variance.model = list(model = "gjrGARCH"),
+distribution.model = "sstd")
+
+garchroll1 <- ugarchroll(tgarchspec1, data = sp500ret , n.start = 2500,
+refit.window = "moving", refit.every = 100)
+
+preds1 <- as.data.frame(garchroll1)
+e1 <- preds1$Realized - preds1$Mu
+d1 <- e1^2 - preds1$Sigma^2
+predaccu1 <- mean(d1^2)
+
+# third model
+tgarchspec2 <- ugarchspec(mean.model = list(armaOrder = c(1,0)),
+variance.model = list(model = "gjrGARCH"),
+distribution.model = "std")
+
+garchroll2 <- ugarchroll(tgarchspec2, data = sp500ret, n.start = 2500,
+refit.window = "moving", refit.every = 100)
+
+preds2 <- as.data.frame(garchroll2)
+e2 <- preds2$Realized - preds2$Mu
+d2 <- e2^2 - preds2$Sigma^2
+predaccu2 <- mean(d2^2)
+
+# forth model
+tgarchspec3 <- ugarchspec(mean.model = list(armaOrder = c(1,0)),
+variance.model = list(model = "sGARCH"),
+distribution.model = "std")
+
+garchroll3 <- ugarchroll(tgarchspec3, data = sp500ret, n.start = 2500,
+refit.window = "moving", refit.every = 100)
+
+preds3 <- as.data.frame(garchroll3)
+e3 <- preds3$Realized - preds3$Mu
+d3 <- e3^2 - preds3$Sigma^2
+predaccu3 <- mean(d3^2)
+
+# fifth model
+tgarchspec4 <- ugarchspec(mean.model = list(armaOrder = c(1,0)),
+variance.model = list(model = "gjrGARCH"),
+distribution.model = "sstd")
+
+garchroll4 <- ugarchroll(tgarchspec4, data = sp500ret , n.start = 2500,
+refit.window = "moving", refit.every = 1000)
+
+preds4 <- as.data.frame(garchroll4)
+e4 <- preds4$Realized - preds4$Mu
+d4 <- e4^2 - preds4$Sigma^2
+predaccu4 <- mean(d4^2)
+
+# sixth model
+tgarchspec5 <- ugarchspec(mean.model = list(armaOrder = c(1,4)),
+variance.model = list(model = "gjrGARCH"),
+distribution.model = "sstd")
+
+garchroll5 <- ugarchroll(tgarchspec5, data = sp500ret , n.start = 2500,
+refit.window = "moving", refit.every = 100)
+
+preds5 <- as.data.frame(garchroll5)
+e5 <- preds5$Realized - preds5$Mu
+d5 <- e5^2 - preds5$Sigma^2
+predaccu5 <- mean(d5^2)
+
+
+predictionaccurancy <- data.frame(Model0 = predaccu0 , Model1=predaccu1 , Model2 = predaccu2 , Model3 = predaccu3 , Model4 = predaccu4 , Model5 = predaccu5)
+predictionaccurancy
+```
+
+## 3.b
+
+**Question**
+
+Forward looking risk management uses the predicted quantiles from the GARCH estimation. Using "ugarchroll" method to estimate the best GARCH model you have obtained from (a) by rolling method to compute $VaRt(\alpha)$ for $\alpha$ = 0.05. The setting of rolling estimation is the same as (a). 
+
+**Answer**
+
+see belows
+note:It seems that the VaR is positive accoring to the fomular $VaR_t(\alpha)=\mu+\sigma_{t|t-1}*F^{-1}(\alpha)$ in the "Take home exam" pdf. However, some materials online show that $VaR_t(\alpha)=-\mu-\sigma_{t|t-1}*F^{-1}(\alpha)$, which is consistent with the result in R.
+```{r}
+head(preds5)
+garchvol5 <- xts(preds5$Sigma, order.by = as.Date(rownames(preds5)))
+VaR5 <- xts(garchroll5@forecast$VaR$`alpha(5%)`, order.by = as.Date(rownames(preds5)))
+par(mfrow = c(3 , 1))
+plot(garchvol5)
+plot(sp500ret)
+plot(VaR5)
+```
+
+## 3.c
+
+**Question**
+
+A VaR exceedance occurs when the actual return is less than the predicted value-at-risk: Rt < VaRt. Plot the scattered points of actual returns, the predicted $VaRt(\alpha)$, and highlight the VaR exceedance points by different color. 
+
+**Answer**
+
+The black line is the predicted VaR, the black points are the real abs(return). And the red points are the real return that smaller than predicted VaR, namely VaR exceedance points.
+```{r}
+VaR5 <- xts(garchroll5@forecast$VaR$`alpha(5%)`, order.by = as.Date(rownames(preds5)))
+plot(VaR5)
+# par(new=TRUE)
+points(sp500ret["1998-11-23/"])
+points(sp500ret["1998-11-23/"][sp500ret["1998-11-23/"] < VaR5] , col = "red")
+```
+
+## 3.d
+
+**Question**
+
+The frequency of VaR exceedances is called the VaR coverage. A valid prediction model has a coverage that is close to the probability level $\alpha$ used. If coverage > $\alpha$ : too many exceedances: the predicted quantile should be more negative. Risk of losing money has been underestimated.If coverage < $\alpha$ : too few exceedances, the predicted quantile was too negative. Risk of losing money has been overestimated. Compute the VaR coverage of the AR(1)-GJR-GARCH with skew-t distribution, AR(1)-GJR-GARCH with t distribution, AR(1)GARCH with t distribution, and AR(1)-GJR-GARCH with skew-t distribution with rolling estimation implemented every 1000 observations instead of 100. You can create a table to display your results.
+
+**Answer**
+
+We can find that the AR(1)-GJR-GARCH with skew-t distribution has the best coverage result that is 0.05159143 from the table printed below, which is consistent with the result in part(a). By the way, the models has been estimated in part(a), so here we use the models estimated in part(a) to calculate the coverage directly.
+```{r}
+# first model
+VaR1 <- xts(garchroll1@forecast$VaR$`alpha(5%)`, order.by = as.Date(rownames(preds1)))
+coverage1 <- (length(VaR1[sp500ret["1998-11-23/"] < VaR1]) / length(sp500ret["1998-11-23/"]))
+
+# second model
+garchvol2 <- xts(preds2$Sigma, order.by = as.Date(rownames(preds2)))
+VaR2 <- xts(garchroll2@forecast$VaR$`alpha(5%)`, order.by = as.Date(rownames(preds2)))
+coverage2 <- (length(VaR2[sp500ret["1998-11-23/"] < VaR2]) / length(sp500ret["1998-11-23/"]))
+
+# third model
+garchvol3 <- xts(preds3$Sigma, order.by = as.Date(rownames(preds3)))
+VaR3 <- xts(garchroll3@forecast$VaR$`alpha(5%)`, order.by = as.Date(rownames(preds3)))
+coverage3 <- (length(VaR3[sp500ret["1998-11-23/"] < VaR3]) / length(sp500ret["1998-11-23/"]))
+
+# forth model
+garchvol4 <- xts(preds4$Sigma, order.by = as.Date(rownames(preds4)))
+VaR4 <- xts(garchroll4@forecast$VaR$`alpha(5%)`, order.by = as.Date(rownames(preds4)))
+coverage4 <- (length(VaR4[sp500ret["1998-11-23/"] < VaR4]) / length(sp500ret["1998-11-23/"]))
+
+coverage1
+coverage2
+coverage3
+coverage4
+coverage.df <- data.frame(Model1 = coverage1 , Model2=coverage2 , Model3 = coverage3 , Model4 = coverage4)
+coverage.df
+```
+
+
+
+
+
